@@ -1,5 +1,5 @@
 /* 
- * File:   GJE.hpp
+ * File:   Inverse3.hpp
  * Author: matthewsupernaw
  *
  * Created on July 1, 2015, 2:03 PM
@@ -7,12 +7,13 @@
 
 #ifndef GJE_HPP
 #define	GJE_HPP
+#include "SIMD.hpp"
 
 namespace matrix {
 
     template<class T>
     struct matrix {
-        T* data;
+        __declspec(align(16)) T* data;
 
         size_t isize;
         size_t jsize;
@@ -47,6 +48,17 @@ namespace matrix {
 
 
     };
+
+    template<class T>
+    std::ostream& operator<<(std::ostream& out, matrix<T>& m) {
+        for (int i = 0; i < m.isize; i++) {
+            for (int j = 0; j < m.jsize; j++) {
+                out << m(i, j) << " ";
+            }
+            out << "\n";
+        }
+        return out;
+    }
 
     class ThreadPool {
     public:
@@ -133,7 +145,7 @@ namespace matrix {
     };
 
     template<class T>
-    class GEWorker {
+    class GJEWorker {
         matrix<T>& A_m;
         matrix<T>& B_m;
         int cstart;
@@ -142,6 +154,9 @@ namespace matrix {
         int rend;
         int dindex;
         T tempval;
+#ifdef USE_SSE
+        typedef typename simd::simd_traits<T>::type type;
+#endif
 
     public:
 
@@ -151,7 +166,7 @@ namespace matrix {
         //            workers = other.workers;
         //        }
 
-        GEWorker(matrix<T>& A, matrix<T>& B) :
+        GJEWorker(matrix<T>& A, matrix<T>& B) :
         A_m(A),
         B_m(B) {
         }
@@ -183,74 +198,131 @@ namespace matrix {
         }
 
         void Phase1() {
+#ifdef USE_SSE
             int col;
-            //            int end = (((cend - 1UL) & size_t(-2)) + 1UL);
+            type a;
+            type b;
+            type temp(tempval);
+            int stop = cend / simd::simd_traits<T>::size;
+            for (col = cstart; col < stop; col += simd::simd_traits<T>::size) {
+                a.load_u(&A_m(dindex, col));
+                b.load_u(&B_m(dindex, col));
+                a *= temp;
+                b *= temp;
+                a.store_u(&A_m(dindex, col));
+                b.store_u(&B_m(dindex, col));
+            }
+//            for (col = cstart; col < cend; col++) {
+//                A_m(dindex, col) *= tempval;
+//                B_m(dindex, col) *= tempval;
+//            }
+#else
+            int col;
             for (col = cstart; col < cend; col++) {
-                //            for (size_t col = cstart; col < cend; col += 2UL) {
                 A_m(dindex, col) *= tempval;
                 B_m(dindex, col) *= tempval;
-                //                A_m(dindex, col + 1) *= tempval;
-                //                B_m(dindex, col + 1) *= tempval;
             }
-            //            if (end < cend) {
-            //                B_m(dindex, end) *= tempval;
-            //            }
+#endif
         }
 
         void Phase2() {
+#ifdef USE_SSE
+
             int row;
             int col;
-            int end = (((cend - 1UL) & size_t(-2)) + 1UL);
+            type a;
+            type b;
+            type a2;
+            type b2;
+            int stop = cend / simd::simd_traits<T>::size;
             for (row = rstart; row < rend; ++row) {
-                //            for (size_t col = 0; col < cend; col += 2UL) {
-                T wval = A_m(row, dindex);
+                T wval2 = A_m(row, dindex);
+                type wval(wval2);
+                for (col = cstart; col < stop; col += simd::simd_traits<T>::size) {
+                    a.load_u(&A_m(row, col));
+                    b.load_u(&B_m(row, col));
+                    a2.load_u(&A_m(dindex, col));
+                    b2.load_u(&B_m(dindex, col));
+                    a -= wval2*a2;
+                    b -= wval2*b2;
+                    a.store_u(&A_m(row, col));
+                    b.store_u(&B_m(row, col));
+                }
+//                for (col = cstart; col < cend; col = col + 1) {
+//                    A_m(row, col) -= wval2 * A_m(dindex, col);
+//                    B_m(row, col) -= wval2 * B_m(dindex, col);
+//                }
+            }
 
+#else
+            int row;
+            int col;
+            for (row = rstart; row < rend; ++row) {
+                T wval = A_m(row, dindex);
                 for (col = cstart; col < cend; col = col + 1) {
                     A_m(row, col) -= wval * A_m(dindex, col);
                     B_m(row, col) -= wval * B_m(dindex, col);
-                    //                    A_m(row, col + 1) -= wval * A_m(dindex, col + 1);
-                    //                    B_m(row, col + 1) -= wval * B_m(dindex, col + 1);
                 }
-                //                if (end < cend) {
-                //                    B_m(row, end) -= wval * B_m(dindex, end);
-                //                }
             }
+#endif
         }
 
         void Phase3() {
+#ifdef USE_SSE
             int row;
             int col;
-            int end = (((cend - 1UL) & size_t(-2)) + 1UL);
+            type a;
+            type b;
+            type a2;
+            type b2;
+            int stop = cend / simd::simd_traits<T>::size;
+            for (row = rstart; row >= rend; --row) {
+                 T wval2 = A_m(row, dindex);
+                type wval(wval2);
+                for (col = cstart; col < stop; col += simd::simd_traits<T>::size) {
+                    a.load_u(&A_m(row, col));
+                    b.load_u(&B_m(row, col));
+                    a2.load_u(&A_m(dindex, col));
+                    b2.load_u(&B_m(dindex, col));
+                    a -= wval*a2;
+                    b -= wval*b2;
+                    a.store_u(&A_m(row, col));
+                    b.store_u(&B_m(row, col));
+                }
+                
+//                for (col = cstart; col < cend; col = col + 1) {
+//                    A_m(row, col) -= wval2 * A_m(dindex, col);
+//                    B_m(row, col) -= wval2 * B_m(dindex, col);
+//                }
+            }
+#else
+            int row;
+            int col;
             for (row = rstart; row >= rend; --row) {
                 T wval = A_m(row, dindex);
 
                 for (col = cstart; col < cend; col = col + 1) {
-                    //                for (size_t col = cstart; col < cend; col += 2UL) {
                     A_m(row, col) -= wval * A_m(dindex, col);
                     B_m(row, col) -= wval * B_m(dindex, col);
-                    //                    A_m(row, col + 1) -= wval * A_m(dindex, col + 1);
-                    //                    B_m(row, col + 1) -= wval * B_m(dindex, col + 1);
                 }
-                //                if (end < cend) {
-                //                    A_m(row, end) -= wval * A_m(dindex, end);
-                //                }
             }
+#endif
         }
     };
 
     template<class T>
-    void LaunchGEWorker(GEWorker<T>& worker, int phase) {
-        switch (phase) {
-            case 1:
-                worker.Phase1();
-                break;
-            case 2:
-                worker.Phase2();
-                break;
-            case 3:
-                worker.Phase3();
-                break;
-        }
+    void LaunchGEWorker1(GJEWorker<T>& worker, int phase) {
+        worker.Phase1();
+    }
+
+    template<class T>
+    void LaunchGEWorker2(GJEWorker<T>& worker, int phase) {
+        worker.Phase2();
+    }
+
+    template<class T>
+    void LaunchGEWorker3(GJEWorker<T>& worker, int phase) {
+        worker.Phase3();
     }
 
     template<class T>
@@ -273,9 +345,9 @@ namespace matrix {
         ThreadPool tpool(nthreads);
 
         //workers for thread pool
-        std::vector<GEWorker<T> > workers;
+        std::vector<GJEWorker<T> > workers;
         for (int i = 0; i < nthreads; i++) {
-            workers.push_back(GEWorker<T>(A, B));
+            workers.push_back(GJEWorker<T>(A, B));
         }
 
         /**
@@ -302,7 +374,7 @@ namespace matrix {
                         cend = nrows;
                     }
                     workers[t].PreparePhase1(dindex, cstart, cend, tempval);
-                    tpool.doJob(std::bind(LaunchGEWorker<T>, std::ref(workers[t]), 1));
+                    tpool.doJob(std::bind(LaunchGEWorker1<T>, std::ref(workers[t]), 1));
                 }
                 tpool.wait();
 
@@ -319,9 +391,8 @@ namespace matrix {
                             rend = nrows;
                         }
 
-
                         workers[t].PreparePhase2(dindex, rstart, rend, 0, nrows);
-                        tpool.doJob(std::bind(LaunchGEWorker<T>, std::ref(workers[t]), 2));
+                        tpool.doJob(std::bind(LaunchGEWorker2<T>, std::ref(workers[t]), 2));
                     }
                     tpool.wait();
                 } else {
@@ -373,7 +444,7 @@ namespace matrix {
                         }
 
                         workers[t].PreparePhase3(dindex, rstart, rend, 0, nrows);
-                        tpool.doJob(std::bind(LaunchGEWorker<T>, std::ref(workers[t]), 3));
+                        tpool.doJob(std::bind(LaunchGEWorker3<T>, std::ref(workers[t]), 3));
                     }
                     tpool.wait();
 
@@ -410,11 +481,12 @@ namespace matrix {
         in>>N;
         //        N = 10;
 
+        typedef float real;
 
-        matrix<double> A(N, N);
-        matrix<double> B(N, N);
-        matrix<double> A2(N, N);
-        matrix<double> B2(N, N);
+        matrix<real> A(N, N);
+        matrix<real> B(N, N);
+        matrix<real> A2(N, N);
+        matrix<real> B2(N, N);
         B.make_identity();
         B2.make_identity();
         for (int i = 0; i < N; i++) {
@@ -436,6 +508,8 @@ namespace matrix {
         //                A(2, 1) = 2.0;
         //                A(2, 2) = -2.0;
 
+
+
         std::cout << "concurrent run..." << std::flush;
         auto eval_start = std::chrono::steady_clock::now();
         Inverse(A, B, N, true);
@@ -443,10 +517,16 @@ namespace matrix {
         std::chrono::duration<double> eval_time = eval_end - eval_start;
         std::cout << "sequential run..." << std::flush;
         auto seval_start = std::chrono::steady_clock::now();
-        Inverse(A, B, N, false);
+        Inverse(A2, B2, N, false);
         auto seval_end = std::chrono::steady_clock::now();
         std::chrono::duration<double> seval_time = seval_end - seval_start;
         std::cout << "done!\n";
+
+        if (N <= 15) {
+            std::cout << B << "\n\n\n" << B2 << "\n\n";
+        }
+
+
         std::cout << N << " x " << N << "\n";
         std::cout << "concurrent time = " << (eval_time.count()) << " sec\n";
         std::cout << "sequential time = " << (seval_time.count()) << " sec\n";
@@ -459,5 +539,5 @@ namespace matrix {
 
 
 
-#endif	/* INVERSE3_HPP */
+#endif	/* GJE_HPP */
 
