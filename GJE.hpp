@@ -212,10 +212,10 @@ namespace matrix {
                 a.store_u(&A_m(dindex, col));
                 b.store_u(&B_m(dindex, col));
             }
-//            for (col = cstart; col < cend; col++) {
-//                A_m(dindex, col) *= tempval;
-//                B_m(dindex, col) *= tempval;
-//            }
+            for (; col < cend; col++) {
+                A_m(dindex, col) *= tempval;
+                B_m(dindex, col) *= tempval;
+            }
 #else
             int col;
             for (col = cstart; col < cend; col++) {
@@ -248,10 +248,10 @@ namespace matrix {
                     a.store_u(&A_m(row, col));
                     b.store_u(&B_m(row, col));
                 }
-//                for (col = cstart; col < cend; col = col + 1) {
-//                    A_m(row, col) -= wval2 * A_m(dindex, col);
-//                    B_m(row, col) -= wval2 * B_m(dindex, col);
-//                }
+                for (;col < cend; col = col + 1) {
+                    A_m(row, col) -= wval2 * A_m(dindex, col);
+                    B_m(row, col) -= wval2 * B_m(dindex, col);
+                }
             }
 
 #else
@@ -276,8 +276,9 @@ namespace matrix {
             type a2;
             type b2;
             int stop = cend / simd::simd_traits<T>::size;
+            
             for (row = rstart; row >= rend; --row) {
-                 T wval2 = A_m(row, dindex);
+                T wval2 = A_m(row, dindex);
                 type wval(wval2);
                 for (col = cstart; col < stop; col += simd::simd_traits<T>::size) {
                     a.load_u(&A_m(row, col));
@@ -289,11 +290,11 @@ namespace matrix {
                     a.store_u(&A_m(row, col));
                     b.store_u(&B_m(row, col));
                 }
-                
-//                for (col = cstart; col < cend; col = col + 1) {
-//                    A_m(row, col) -= wval2 * A_m(dindex, col);
-//                    B_m(row, col) -= wval2 * B_m(dindex, col);
-//                }
+
+                for (;col < cend; col = col + 1) {
+                    A_m(row, col) -= wval2 * A_m(dindex, col);
+                    B_m(row, col) -= wval2 * B_m(dindex, col);
+                }
             }
 #else
             int row;
@@ -406,7 +407,7 @@ namespace matrix {
                     }
 
                 }
-
+            
             } else {
 
                 for (size_t col = 0; col < nrows; col++) {
@@ -421,10 +422,11 @@ namespace matrix {
                         B(row, col) -= wval * B(dindex, col);
                     }
                 }
+                
             }
         }
 
-
+    
         /**
          *Back substitution
          */
@@ -439,6 +441,7 @@ namespace matrix {
                     for (int t = 0; t < nthreads; t++) {
                         int rstart = (dindex - 1) - (t) * rrange;
                         int rend = (dindex - 1) - (t + 1) * rrange;
+                        
                         if (t == (nthreads - 1)) {
                             rend = 0;
                         }
@@ -481,7 +484,7 @@ namespace matrix {
         in>>N;
         //        N = 10;
 
-        typedef float real;
+        typedef double real;
 
         matrix<real> A(N, N);
         matrix<real> B(N, N);
@@ -522,7 +525,7 @@ namespace matrix {
         std::chrono::duration<double> seval_time = seval_end - seval_start;
         std::cout << "done!\n";
 
-        if (N <= 15) {
+        if (N <= 20) {
             std::cout << B << "\n\n\n" << B2 << "\n\n";
         }
 
